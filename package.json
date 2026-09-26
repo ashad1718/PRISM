@@ -12,7 +12,8 @@
     "build:web": "npm run build -w @prism/web",
     "dev:indexer": "npm run dev -w @prism/indexer",
     "dev:oracle": "npm run dev -w @prism/oracle",
-    "dev:web": "npm run dev -w @prism/web",
+    "dev:web": "npm run build:shared && npm run dev -w @prism/web",
+    "dev:backend": "node backend/index.js",
     "build:ts": "npm run build:shared && npm run build:indexer && npm run build:oracle"
   },
   "engines": {

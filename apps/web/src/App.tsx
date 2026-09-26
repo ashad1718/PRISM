@@ -8,7 +8,7 @@ import {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
-import { type StoredMarket, calculateLmsrCost, calculateLmsrPrices } from "@prism/shared";
+import { type StoredMarket, calculateLmsrCost, calculateLmsrPrices, isMarketTradeable, getMarketOutcomeTokenIds } from "@prism/shared";
 import confetti from "canvas-confetti";
 import {
   TrendingUp,
@@ -36,6 +36,7 @@ import idl from "./idl/prism.json";
 import AdminPage from "./AdminPage";
 import TransactionHistoryPage from "./TransactionHistoryPage";
 import MarketActivity from "./MarketActivity";
+import CommentSection from "./CommentSection";
 import LandingPage from "./LandingPage";
 import LandingContent from "./LandingContent";
 import { GradientWave } from "./GradientWave";
@@ -278,12 +279,23 @@ export default function App() {
   }, [refreshPosition, refreshMarketData]);
 
   async function trade(side: "buy" | "sell", outcome: 0 | 1) {
-    if (!program || !wallet.publicKey || !active) {
+    if (!active) return;
+    if (!wallet.publicKey) {
       setMsg("Connect your wallet to trade on PRISM.");
       return;
     }
     if (active.source === "polymarket") {
-      setMsg("This is an external Polymarket reference market. PRISM trading is not supported.");
+      const { yesTokenId, noTokenId } = getMarketOutcomeTokenIds(active);
+      const targetTokenId = outcome === 0 ? yesTokenId : noTokenId;
+      setMsg(
+        `Polymarket CLOB order submission is not currently connected on the PRISM backend. Outcome Token ID: ${
+          targetTokenId || "N/A"
+        }`
+      );
+      return;
+    }
+    if (!program) {
+      setMsg("Connect your wallet to trade on PRISM.");
       return;
     }
     const shareAmount = Math.round(Number(shares) * 1_000_000);
@@ -435,7 +447,7 @@ export default function App() {
   const noPct = noPctNum.toFixed(1);
 
   let currentStatus = onChainState?.status || active?.status || "open";
-  const activeEndTs = Number(onChainState?.endTs || active?.end_ts || active?.endTs || 0);
+  const activeEndTs = Number((onChainState as any)?.endTs || (active as any)?.end_ts || active?.endTs || 0);
   if (currentStatus === "open" && activeEndTs > 0 && Date.now() / 1000 > activeEndTs) {
     currentStatus = "frozen";
   }
@@ -855,121 +867,137 @@ export default function App() {
                     </div>
 
                     {/* Trade Widget Box */}
-                    {currentStatus === "open" && active.source === "polymarket" && (
-                      <div className="trade-card-box external-market-notice" style={{ padding: "1.5rem", textAlign: "center", color: "var(--text-secondary)" }}>
-                        <p style={{ marginBottom: 0 }}>
-                          This is an external market imported from Polymarket Gamma API.
-                          <br />PRISM Anchor trading is not supported.
-                        </p>
-                      </div>
-                    )}
-                    {currentStatus === "open" && active.source !== "polymarket" && (
-                      <div className="trade-card-box">
-                        <div className="trade-outcome-toggle">
-                          <button
-                            type="button"
-                            className={`outcome-btn yes-btn ${tradeOutcome === 0 ? "active" : ""}`}
-                            onClick={() => setTradeOutcome(0)}
-                          >
-                            <CheckCircle2 size={18} /> YES {yesPct}%
-                          </button>
-                          <button
-                            type="button"
-                            className={`outcome-btn no-btn ${tradeOutcome === 1 ? "active" : ""}`}
-                            onClick={() => setTradeOutcome(1)}
-                          >
-                            <AlertTriangle size={18} /> NO {noPct}%
-                          </button>
-                        </div>
+                    {(() => {
+                      const tradeable = isMarketTradeable(active);
+                      const { yesTokenId, noTokenId } = getMarketOutcomeTokenIds(active);
+                      const activeTokenId = tradeOutcome === 0 ? yesTokenId : noTokenId;
 
-                        <div className="amount-input-group">
-                          <div className="amount-label-row">
-                            <span>Share Amount</span>
-                            <span>LMSR Collateralized</span>
+                      if (currentStatus !== "open") return null;
+
+                      if (!tradeable) {
+                        return (
+                          <div className="trade-card-box external-market-notice" style={{ padding: "1.5rem", textAlign: "center", color: "var(--ink-secondary)" }}>
+                            <p style={{ marginBottom: 0 }}>
+                              Trading is currently unavailable for this market.
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="trade-card-box">
+                          <div className="trade-outcome-toggle">
+                            <button
+                              type="button"
+                              className={`outcome-btn yes-btn ${tradeOutcome === 0 ? "active" : ""}`}
+                              onClick={() => setTradeOutcome(0)}
+                            >
+                              <CheckCircle2 size={18} /> YES {yesPct}%
+                            </button>
+                            <button
+                              type="button"
+                              className={`outcome-btn no-btn ${tradeOutcome === 1 ? "active" : ""}`}
+                              onClick={() => setTradeOutcome(1)}
+                            >
+                              <AlertTriangle size={18} /> NO {noPct}%
+                            </button>
                           </div>
 
-                          <div className="input-with-presets">
-                            <input
-                              type="text"
-                              className="amount-input"
-                              value={shares}
-                              onChange={(e) => setShares(e.target.value)}
-                              inputMode="decimal"
-                              placeholder="10"
-                            />
+                          <div className="amount-input-group">
+                            <div className="amount-label-row">
+                              <span>Share Amount</span>
+                              <span>{active.source === "polymarket" ? "Polymarket Order" : "LMSR Collateralized"}</span>
+                            </div>
 
-                            <div className="preset-pills">
-                              {["5", "10", "50", "100", "500"].map((val) => (
-                                <button
-                                  key={val}
-                                  type="button"
-                                  className="preset-pill"
-                                  onClick={() => setShares(val)}
-                                >
-                                  {val}
-                                </button>
-                              ))}
+                            <div className="input-with-presets">
+                              <input
+                                type="text"
+                                className="amount-input"
+                                value={shares}
+                                onChange={(e) => setShares(e.target.value)}
+                                inputMode="decimal"
+                                placeholder="10"
+                              />
+
+                              <div className="preset-pills">
+                                {["5", "10", "50", "100", "500"].map((val) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    className="preset-pill"
+                                    onClick={() => setShares(val)}
+                                  >
+                                    {val}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        {/* Trade Summary Info */}
-                        <div className="trade-summary-rows">
-                          <div className="summary-row">
-                            <span>Total Cost (USDC):</span>
-                            <strong>${selectedCost.toFixed(2)} USDC</strong>
+                          {/* Trade Summary Info */}
+                          <div className="trade-summary-rows">
+                            <div className="summary-row">
+                              <span>Total Cost (USDC):</span>
+                              <strong>${selectedCost.toFixed(2)} USDC</strong>
+                            </div>
+                            <div className="summary-row">
+                              <span>Avg. Share Price:</span>
+                              <strong>${avgPrice.toFixed(2)}</strong>
+                            </div>
+                            <div className="summary-row">
+                              <span>Payout on Win ($1/share):</span>
+                              <strong>${toWin.toFixed(2)} USDC</strong>
+                            </div>
+                            <div className="summary-row highlight">
+                              <span>Potential Profit:</span>
+                              <strong>+${potentialProfit.toFixed(2)} USDC ({returnPercentage.toFixed(1)}%)</strong>
+                            </div>
+                            {active.source === "polymarket" && activeTokenId && (
+                              <div className="summary-row" style={{ fontSize: "0.75rem", color: "var(--ink-muted)", marginTop: "4px" }}>
+                                <span>CLOB Token ID:</span>
+                                <code style={{ fontSize: "0.75rem" }}>{activeTokenId.slice(0, 16)}...</code>
+                              </div>
+                            )}
                           </div>
-                          <div className="summary-row">
-                            <span>Avg. Share Price:</span>
-                            <strong>${avgPrice.toFixed(2)}</strong>
-                          </div>
-                          <div className="summary-row">
-                            <span>Payout on Win ($1/share):</span>
-                            <strong>${toWin.toFixed(2)} USDC</strong>
-                          </div>
-                          <div className="summary-row highlight">
-                            <span>Potential Profit:</span>
-                            <strong>+${potentialProfit.toFixed(2)} USDC ({returnPercentage.toFixed(1)}%)</strong>
-                          </div>
-                        </div>
 
-                        {/* Submit Trade Button */}
-                        <button
-                          type="button"
-                          className={`submit-trade-btn ${tradeOutcome === 0 ? "buy-yes" : "buy-no"}`}
-                          disabled={busy}
-                          onClick={() => trade("buy", tradeOutcome)}
-                        >
-                          {busy ? (
-                            <RefreshCw className="animate-spin" size={20} />
-                          ) : (
-                            <>
-                              <Coins size={20} /> BUY {tradeOutcome === 0 ? "YES" : "NO"} SHARES
-                            </>
-                          )}
-                        </button>
-
-                        {/* Secondary Sell Actions */}
-                        <div className="secondary-sell-btns">
+                          {/* Submit Trade Button */}
                           <button
                             type="button"
-                            className="sell-btn"
+                            className={`submit-trade-btn ${tradeOutcome === 0 ? "buy-yes" : "buy-no"}`}
                             disabled={busy}
-                            onClick={() => trade("sell", 0)}
+                            onClick={() => trade("buy", tradeOutcome)}
                           >
-                            Sell YES Position
+                            {busy ? (
+                              <RefreshCw className="animate-spin" size={20} />
+                            ) : (
+                              <>
+                                <Coins size={20} /> BUY {tradeOutcome === 0 ? "YES" : "NO"} SHARES
+                              </>
+                            )}
                           </button>
-                          <button
-                            type="button"
-                            className="sell-btn"
-                            disabled={busy}
-                            onClick={() => trade("sell", 1)}
-                          >
-                            Sell NO Position
-                          </button>
+
+                          {/* Secondary Sell Actions */}
+                          <div className="secondary-sell-btns">
+                            <button
+                              type="button"
+                              className="sell-btn"
+                              disabled={busy}
+                              onClick={() => trade("sell", 0)}
+                            >
+                              Sell YES Position
+                            </button>
+                            <button
+                              type="button"
+                              className="sell-btn"
+                              disabled={busy}
+                              onClick={() => trade("sell", 1)}
+                            >
+                              Sell NO Position
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Frozen Banner */}
                     {currentStatus === "frozen" && (
@@ -1084,6 +1112,16 @@ export default function App() {
                         refreshTrigger={refreshCounter}
                       />
                     )}
+
+                    {/* Authenticated User Comment Section */}
+                    {active && (() => {
+                      console.log("[COMMENTS] MARKET OBJECT:", active);
+                      return (
+                        <CommentSection
+                          marketId={active.polymarketId || active.pubkey || ""}
+                        />
+                      );
+                    })()}
                   </>
                 )}
               </ErrorBoundary>

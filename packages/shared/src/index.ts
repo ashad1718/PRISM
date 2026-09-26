@@ -46,6 +46,58 @@ export type CuratedMarket = {
   raw: GammaMarket | any;
 };
 
+export function parseArrayField<T = string>(value: T[] | string | null | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isMarketTradeable(market: any): boolean {
+  if (!market) return false;
+  if (market.source === "prism" || (market.source !== "polymarket" && market.pubkey)) {
+    return true;
+  }
+  const raw = market.raw || market;
+  const tokenIds = parseArrayField<string>(raw.clobTokenIds || market.clobTokenIds);
+
+  const active = raw.active !== undefined ? Boolean(raw.active) : (market.active !== undefined ? Boolean(market.active) : true);
+  const closed = raw.closed !== undefined ? Boolean(raw.closed) : (market.closed !== undefined ? Boolean(market.closed) : false);
+  const acceptingOrders = raw.acceptingOrders !== undefined ? Boolean(raw.acceptingOrders) : (market.acceptingOrders !== undefined ? Boolean(market.acceptingOrders) : true);
+
+  return (
+    active === true &&
+    closed !== true &&
+    acceptingOrders === true &&
+    tokenIds.length >= 2 &&
+    Boolean(tokenIds[0]) &&
+    Boolean(tokenIds[1])
+  );
+}
+
+export function getMarketOutcomeTokenIds(market: any): { yesTokenId: string | null; noTokenId: string | null } {
+  if (!market) return { yesTokenId: null, noTokenId: null };
+  const raw = market.raw || market;
+  const outcomes = parseArrayField<string>(raw.outcomes || market.outcomes);
+  const tokenIds = parseArrayField<string>(raw.clobTokenIds || market.clobTokenIds);
+
+  if (tokenIds.length < 2) {
+    return { yesTokenId: tokenIds[0] || null, noTokenId: tokenIds[1] || null };
+  }
+
+  const yesIndex = outcomes.findIndex((o) => typeof o === "string" && o.toLowerCase() === "yes");
+  const noIndex = outcomes.findIndex((o) => typeof o === "string" && o.toLowerCase() === "no");
+
+  const yesTokenId = yesIndex >= 0 ? tokenIds[yesIndex] : tokenIds[0];
+  const noTokenId = noIndex >= 0 ? tokenIds[noIndex] : tokenIds[1];
+
+  return { yesTokenId: yesTokenId || null, noTokenId: noTokenId || null };
+}
+
 function parseJsonArray(value?: string): string[] {
   if (!value) return [];
   try {
